@@ -9,6 +9,7 @@ PKG_DESCRIPTION := Minimalist istoreOS SD-card burner for OpenWrt
 
 BUILD_DIR := build
 SCRIPT_DIR := wangyi-openwrt-installer
+IPK_DIR := $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)
 
 .PHONY: build clean test lint help
 
@@ -27,26 +28,26 @@ help:
 
 build: clean
 	@echo "Building $(PKG_NAME) v$(PKG_VERSION) for $(PKG_ARCH)..."
-	@mkdir -p $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/CONTROL
-	@mkdir -p $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/data/usr/bin
-	@mkdir -p $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/data/usr/share/$(PKG_NAME)
-	@echo "Package: $(PKG_NAME)" > $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/CONTROL/control
-	@echo "Version: $(PKG_VERSION)-$(PKG_RELEASE)" >> $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/CONTROL/control
-	@echo "Architecture: $(PKG_ARCH)" >> $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/CONTROL/control
-	@echo "Maintainer: $(PKG_MAINTAINER)" >> $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/CONTROL/control
-	@echo "Description: $(PKG_DESCRIPTION)" >> $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/CONTROL/control
-	@echo "License: Apache-2.0" >> $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/CONTROL/control
-	@cp $(SCRIPT_DIR)/$(PKG_NAME) $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/data/usr/bin/
-	@chmod 755 $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/data/usr/bin/$(PKG_NAME)
-	@cp -r examples/* $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/data/usr/share/$(PKG_NAME)/ 2>/dev/null || true
-	@cd $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/CONTROL && tar -czf ../../control.tar.gz *
-	@cd $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH)/data && tar -czf ../../data.tar.gz *
-	@cd $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH) && \
+	@mkdir -p $(IPK_DIR)/CONTROL
+	@mkdir -p $(IPK_DIR)/data/usr/bin
+	@mkdir -p $(IPK_DIR)/data/usr/share/$(PKG_NAME)
+	@echo "Package: $(PKG_NAME)" > $(IPK_DIR)/CONTROL/control
+	@echo "Version: $(PKG_VERSION)-$(PKG_RELEASE)" >> $(IPK_DIR)/CONTROL/control
+	@echo "Architecture: $(PKG_ARCH)" >> $(IPK_DIR)/CONTROL/control
+	@echo "Maintainer: $(PKG_MAINTAINER)" >> $(IPK_DIR)/CONTROL/control
+	@echo "Description: $(PKG_DESCRIPTION)" >> $(IPK_DIR)/CONTROL/control
+	@echo "License: Apache-2.0" >> $(IPK_DIR)/CONTROL/control
+	@cp $(SCRIPT_DIR)/$(PKG_NAME) $(IPK_DIR)/data/usr/bin/
+	@chmod 755 $(IPK_DIR)/data/usr/bin/$(PKG_NAME)
+	@cp -r examples/* $(IPK_DIR)/data/usr/share/$(PKG_NAME)/ 2>/dev/null || true
+	@cd $(IPK_DIR)/CONTROL && tar -czf $(BUILD_DIR)/control.tar.gz .
+	@cd $(IPK_DIR)/data && tar -czf $(BUILD_DIR)/data.tar.gz .
+	@cd $(BUILD_DIR) && \
 		echo "2.0" > debian-binary && \
-		ar rcs ../../$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH).ipk \
+		ar rcs $(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH).ipk \
 			debian-binary \
-			../../control.tar.gz \
-			../../data.tar.gz
+			control.tar.gz \
+			data.tar.gz
 	@echo "Built: $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH).ipk"
 
 clean:
