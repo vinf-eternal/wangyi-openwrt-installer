@@ -77,7 +77,6 @@ $(IPK_DIR):
 	mkdir -p $(DATA_USR_SHARE)
 
 # Build control file
-$(CONTROL_FILE): $(CONTROL_DIR)/control
 CONTROL_FILE := $(CONTROL_DIR)/control
 
 $(CONTROL_FILE): $(CONTROL_DIR)
@@ -111,7 +110,7 @@ $(BUILD_DIR)/data.tar.gz: $(DATA_DIR)
 	cd $(DATA_DIR) && tar -czf ../data.tar.gz *
 
 # Build IPK
-build: check-deps clean-$(PKG_ARCH) $(BUILD_DIR)/control.tar.gz $(BUILD_DIR)/data.tar.gz
+build: check-deps clean $(BUILD_DIR)/control.tar.gz $(BUILD_DIR)/data.tar.gz
 	@echo "Building IPK package for $(PKG_ARCH)..."
 	cd $(BUILD_DIR) && \
 	echo "2.0" > debian-binary && \
@@ -132,10 +131,6 @@ build-all: check-deps
 	done
 	@echo ""
 	@echo "=== All builds complete ==="
-
-# Clean specific architecture
-clean-$(PKG_ARCH):
-	rm -rf $(IPK_DIR)
 
 # Lint shell scripts
 lint:
