@@ -24,8 +24,12 @@
 - **Dry-Run Mode**: Test without writing to disk
 - **Automatic Detection**: Identifies target SD card automatically
 - **Progress Display**: Shows write progress in real-time
-- **Checksum Verification**: Validates downloaded images (optional)
+- **Checksum Verification**: Validates downloaded images (SHA256/SHA512)
+- **Resume Download**: Supports断点续传
+- **Write Verification**: Verifies data integrity after writing
 - **Customizable**: Environment variables for URL, device, and options
+- **Root Protection**: Requires root privileges to run
+- **Device Whitelist**: Prevents writing to primary system disk
 
 ## Requirements
 
@@ -77,6 +81,8 @@ wangyi-openwrt-installer
 | `ISTOREOS_SD_DEV` | Target SD card device | (auto-detect) |
 | `ISTOREOS_DRY_RUN` | Enable dry-run mode | `0` |
 | `ISTOREOS_VERIFY` | Verify image checksum | `0` |
+| `ISTOREOS_HASH_URL` | URL of hash file (SHA256/SHA512) | (optional) |
+| `ISTOREOS_EXPECTED_HASH` | Expected hash value | (optional) |
 | `ISTOREOS_LOG` | Log file path | `/tmp/istoreos-install.log` |
 
 ### Examples

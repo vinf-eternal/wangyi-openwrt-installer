@@ -16,6 +16,8 @@
 #   ISTOREOS_DRY_RUN    - Enable dry-run mode (0 or 1, default: 0)
 #   ISTOREOS_VERIFY     - Verify image checksum (0 or 1, default: 0)
 #   ISTOREOS_LOG        - Log file path (default: /tmp/istoreos-install.log)
+#   ISTOREOS_HASH_URL   - URL of SHA256/SHA512 hash file (optional)
+#   ISTOREOS_EXPECTED_HASH - Expected hash value (optional)
 #
 # License: Apache-2.0
 # Author: vinf-eternal
@@ -27,7 +29,7 @@ set -euo pipefail
 # Configuration
 #-------------------------------------------------------------------------------
 readonly SCRIPT_NAME="$(basename "$0")"
-readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_VERSION="1.0.1"
 
 readonly LOG="${ISTOREOS_LOG:-/tmp/istoreos-install.log}"
 readonly DOWNLOAD_DIR="/tmp/istoreos"
@@ -37,6 +39,8 @@ readonly DEFAULT_IMG_URL="${ISTOREOS_IMG_URL:-}"
 readonly TARGET_DEV="${ISTOREOS_SD_DEV:-}"
 readonly DRY_RUN="${ISTOREOS_DRY_RUN:-0}"
 readonly VERIFY="${ISTOREOS_VERIFY:-0}"
+readonly HASH_URL="${ISTOREOS_HASH_URL:-}"
+readonly EXPECTED_HASH="${ISTOREOS_EXPECTED_HASH:-}"
 
 #-------------------------------------------------------------------------------
 # Colors (with fallback for terminals without color support)
@@ -47,15 +51,37 @@ if [ -t 1 ]; then
     readonly C_GREEN='\033[0;32m'
     readonly C_YELLOW='\033[0;33m'
     readonly C_BLUE='\033[0;34m'
+    readonly C_CYAN='\033[0;36m'
     readonly C_BOLD='\033[1m'
+    readonly C_DIM='\033[2m'
 else
     readonly C_RESET=''
     readonly C_RED=''
     readonly C_GREEN=''
     readonly C_YELLOW=''
     readonly C_BLUE=''
+    readonly C_CYAN=''
     readonly C_BOLD=''
+    readonly C_DIM=''
 fi
+
+#-------------------------------------------------------------------------------
+# Progress Bar
+#-------------------------------------------------------------------------------
+show_progress() {
+    local current="$1"
+    local total="$2"
+    local width=40
+    local percent=$((current * 100 / total))
+    local filled=$((width * current / total))
+    local empty=$((width - filled))
+
+    printf "\r${C_CYAN}[${C_GREEN}"
+    printf "%${filled}s" | tr ' ' '='
+    printf "${C_RESET}"
+    printf "%${empty}s" | tr ' ' '-'
+    printf "${C_CYAN}]${C_RESET} %3d%%" "$percent"
+}
 
 #-------------------------------------------------------------------------------
 # Logging Functions
@@ -82,6 +108,11 @@ log_success() {
     log "${C_GREEN}[OK]${C_RESET} $*"
 }
 
+log_step() {
+    echo ""
+    log "${C_BOLD}[STEP]${C_RESET} $*"
+}
+
 #-------------------------------------------------------------------------------
 # Help and Version
 #-------------------------------------------------------------------------------
@@ -100,24 +131,28 @@ Options:
     -u, --url URL          Set istoreOS image URL
     -t, --target DEVICE    Set target SD card device
     --verify               Verify image checksum after download
+    --hash-url URL         URL of hash file (SHA256/SHA512)
+    --expected-hash HASH   Expected hash value
     --no-prompt            Skip confirmation prompt (use with caution)
 
 Environment Variables:
-    ISTOREOS_IMG_URL       URL of istoreOS image (required)
-    ISTOREOS_SD_DEV        Target SD card device (auto-detected if not set)
-    ISTOREOS_DRY_RUN       Enable dry-run mode (0 or 1)
-    ISTOREOS_VERIFY        Verify image checksum (0 or 1)
-    ISTOREOS_LOG           Log file path
+    ISTOREOS_IMG_URL           URL of istoreOS image (required)
+    ISTOREOS_SD_DEV            Target SD card device (auto-detected if not set)
+    ISTOREOS_DRY_RUN           Enable dry-run mode (0 or 1)
+    ISTOREOS_VERIFY            Verify image checksum (0 or 1)
+    ISTOREOS_HASH_URL          URL of hash file
+    ISTOREOS_EXPECTED_HASH     Expected hash value
+    ISTOREOS_LOG               Log file path
 
 Examples:
     # Basic usage
-    $SCRIPT_NAME
-
-    # Specify image URL
     $SCRIPT_NAME --url https://example.com/istoreos.img
 
     # Dry-run mode (safe testing)
-    $SCRIPT_NAME --dry-run
+    $SCRIPT_NAME --dry-run --url https://example.com/istoreos.img
+
+    # With hash verification
+    $SCRIPT_NAME --url https://example.com/istoreos.img --verify
 
     # Specify target device
     $SCRIPT_NAME --url https://example.com/istoreos.img --target /dev/sdb
@@ -145,9 +180,9 @@ check_command() {
 
 get_downloader() {
     if check_command curl; then
-        echo "curl -L -o"
+        echo "curl"
     elif check_command wget; then
-        echo "wget -O"
+        echo "wget"
     else
         log_error "Neither curl nor wget is available. Please install one of them."
         return 1
@@ -178,9 +213,15 @@ is_safe_device() {
     case "$device_name" in
         sd[a-z]|hd[a-z]|vd[a-z]|nvme[0-9]n[0-9])
             if [ "$device_name" = "sda" ] || [ "$device_name" = "hda" ] || [ "$device_name" = "vda" ]; then
-                log_warn "Device $dev appears to be the primary disk!"
+                log_warn "Device $dev appears to be the PRIMARY disk!"
                 return 1
             fi
+            if [ "$device_name" = "sdb" ] || [ "$device_name" = "hdb" ] || [ "$device_name" = "vdb" ]; then
+                return 0
+            fi
+            return 0
+            ;;
+        mmcblk[0-9]|sdcard[0-9])
             return 0
             ;;
         *)
@@ -190,23 +231,73 @@ is_safe_device() {
     esac
 }
 
+is_device_mounted() {
+    local dev="$1"
+    if mount | grep -q "^$dev"; then
+        return 0
+    fi
+    return 1
+}
+
 check_lockfile() {
     if [ -e "$LOCKFILE" ]; then
-        log_error "Another installation is in progress. If not, remove $LOCKFILE"
-        exit 1
+        local pid
+        pid="$(cat "$LOCKFILE" 2>/dev/null || echo "unknown")"
+        if [ -d "/proc/$pid" ] 2>/dev/null; then
+            log_error "Another installation is in progress (PID: $pid). If not, remove $LOCKFILE"
+            exit 1
+        else
+            log_warn "Stale lockfile found, removing..."
+            rm -f "$LOCKFILE"
+        fi
     fi
+}
+
+write_pid() {
+    echo $$ > "$LOCKFILE"
 }
 
 #-------------------------------------------------------------------------------
 # Device Detection
 #-------------------------------------------------------------------------------
+list_available_devices() {
+    log_info "Scanning for available block devices..."
+
+    local devices=""
+    for dev in /dev/sd[a-z] /dev/hd[a-z] /dev/vd[a-z] /dev/nvme[0-9]n[0-9] /dev/mmcblk[0-9]; do
+        [ -b "$dev" ] || continue
+
+        if ! is_safe_device "$dev"; then
+            continue
+        fi
+
+        local size
+        size="$(blockdev --getsize64 "$dev" 2>/dev/null || echo 0)"
+
+        if [ "$size" -gt 0 ]; then
+            local mounted=""
+            if is_device_mounted "$dev"; then
+                mounted="${C_YELLOW}[mounted]${C_RESET}"
+            fi
+            echo "  $dev  $(human_size "$size") $mounted"
+            devices="$devices $dev"
+        fi
+    done
+
+    if [ -z "$devices" ]; then
+        return 1
+    fi
+
+    return 0
+}
+
 detect_target_device() {
     log_info "Detecting target SD card..."
 
     local target=""
     local max_size=0
 
-    for dev in /dev/sd[a-z] /dev/hd[a-z] /dev/vd[a-z] /dev/nvme[0-9]n[0-9]; do
+    for dev in /dev/sd[a-z] /dev/hd[a-z] /dev/vd[a-z] /dev/nvme[0-9]n[0-9] /dev/mmcblk[0-9]; do
         [ -b "$dev" ] || continue
 
         if ! is_safe_device "$dev"; then
@@ -217,14 +308,21 @@ detect_target_device() {
         size="$(blockdev --getsize64 "$dev" 2>/dev/null || echo 0)"
 
         if [ "$size" -gt "$max_size" ]; then
-            max_size="$size"
+            max_size=$size
             target="$dev"
         fi
     done
 
     if [ -z "$target" ]; then
         log_error "No suitable target device found. Please insert SD card and try again."
+        log_info "Hint: Make sure the SD card is connected and recognized by the system."
         return 1
+    fi
+
+    if is_device_mounted "$target"; then
+        log_warn "Target device $target is mounted!"
+        log_info "Unmounting all partitions on $target..."
+        umount "${target}"* 2>/dev/null || true
     fi
 
     local human_size
@@ -247,9 +345,36 @@ download_image() {
 
     local downloader
     downloader="$(get_downloader)"
-    set -- $downloader "$output" "$url"
+    local downloader_opts=""
 
-    if ! "$@" 2>&1 | tee -a "$LOG"; then
+    case "$downloader" in
+        curl)
+            downloader_opts="-L --retry 3 --retry-delay 5 -o"
+            ;;
+        wget)
+            downloader_opts="-c -q -O"
+            ;;
+    esac
+
+    if [ -f "$output" ]; then
+        local existing_size
+        existing_size="$(stat -c%s "$output" 2>/dev/null || echo 0)"
+        if [ "$existing_size" -gt 0 ]; then
+            log_info "Resuming download (found existing file: $(human_size "$existing_size"))"
+            case "$downloader" in
+                curl)
+                    downloader_opts="$downloader_opts -C -"
+                    ;;
+                wget)
+                    downloader_opts="$downloader_opts -c"
+                    ;;
+            esac
+        fi
+    fi
+
+    log_info "Starting download..."
+
+    if ! eval "$downloader $downloader_opts \"$output\" \"$url\"" 2>&1 | tee -a "$LOG"; then
         log_error "Failed to download image"
         return 1
     fi
@@ -261,11 +386,96 @@ download_image() {
 
     local file_size
     file_size="$(stat -c%s "$output" 2>/dev/null || stat -f%z "$output" 2>/dev/null || echo 0)"
+    if [ "$file_size" -eq 0 ]; then
+        log_error "Downloaded file is empty!"
+        rm -f "$output"
+        return 1
+    fi
+
     local human_size
     human_size="$(human_size "$file_size")"
     log_success "Downloaded image (${human_size})"
 
     return 0
+}
+
+#-------------------------------------------------------------------------------
+# Hash Verification
+#-------------------------------------------------------------------------------
+verify_hash() {
+    local image="$1"
+    local expected="$2"
+
+    if [ -z "$expected" ]; then
+        log_warn "No expected hash provided, skipping verification"
+        return 0
+    fi
+
+    log_info "Verifying image hash..."
+
+    local actual_hash=""
+    local hash_type=""
+
+    if echo "$expected" | grep -qE '^[a-fA-F0-9]{128}$'; then
+        hash_type="SHA512"
+        actual_hash="$(sha512sum "$image" 2>/dev/null | cut -d' ' -f1)"
+    elif echo "$expected" | grep -qE '^[a-fA-F0-9]{64}$'; then
+        hash_type="SHA256"
+        actual_hash="$(sha256sum "$image" 2>/dev/null | cut -d' ' -f1)"
+    else
+        log_error "Invalid hash format. Expected SHA256 (64 chars) or SHA512 (128 chars)"
+        return 1
+    fi
+
+    if [ "$actual_hash" = "$expected" ]; then
+        log_success "Hash verification PASSED ($hash_type)"
+        return 0
+    else
+        log_error "Hash verification FAILED!"
+        log_error "Expected: $expected"
+        log_error "Actual:   $actual_hash"
+        return 1
+    fi
+}
+
+fetch_and_verify_hash() {
+    local image="$1"
+    local hash_url="$2"
+
+    if [ -z "$hash_url" ]; then
+        log_warn "No hash URL provided, skipping verification"
+        return 0
+    fi
+
+    log_info "Fetching hash from: $hash_url"
+
+    local downloader
+    downloader="$(get_downloader)"
+    local hash_file="${DOWNLOAD_DIR}/hash.txt"
+
+    case "$downloader" in
+        curl)
+            curl -L -s -o "$hash_file" "$hash_url" || return 1
+            ;;
+        wget)
+            wget -q -O "$hash_file" "$hash_url" || return 1
+            ;;
+    esac
+
+    if [ ! -f "$hash_file" ]; then
+        log_error "Failed to fetch hash file"
+        return 1
+    fi
+
+    local expected_hash
+    expected_hash="$(grep -oE '[a-fA-F0-9]{64}|[a-fA-F0-9]{128}' "$hash_file" | head -1)"
+
+    if [ -z "$expected_hash" ]; then
+        log_error "Could not extract hash from file"
+        return 1
+    fi
+
+    verify_hash "$image" "$expected_hash"
 }
 
 #-------------------------------------------------------------------------------
@@ -275,25 +485,34 @@ write_image() {
     local image="$1"
     local target="$2"
 
-    log_info "Writing image to $target..."
-
     local bs="4M"
-    local dd_opts="bs=$bs status=progress"
 
     if [ "$DRY_RUN" = "1" ]; then
         log_info "[DRY-RUN] Would execute: dd if='$image' of='$target' bs=$bs"
         log_info "[DRY-RUN] Image size: $(human_size "$(stat -c%s "$image")")"
+        log_info "[DRY-RUN] Target device: $target"
         log_success "Dry-run completed successfully"
         return 0
     fi
 
-    if ! dd if="$image" of="$target" $dd_opts 2>&1 | tee -a "$LOG"; then
+    log_info "Writing image to $target (block size: $bs)..."
+
+    if ! dd if="$image" of="$target" bs="$bs" conv=fsync status=progress 2>&1 | tee -a "$LOG"; then
         log_error "Failed to write image to device"
+        log_info "Attempting to recover partition table..."
+        sfdisk -R "$target" 2>/dev/null || true
         return 1
     fi
 
     sync
     log_success "Image written successfully"
+
+    log_info "Verifying written data..."
+    if ! dd if="$target" of=/dev/null bs="$bs" count=1 2>/dev/null; then
+        log_warn "Verification failed - written data may be corrupted"
+        return 1
+    fi
+    log_success "Write verification passed"
 }
 
 #-------------------------------------------------------------------------------
@@ -310,18 +529,26 @@ confirm_write() {
     local image_size
     image_size="$(stat -c%s "$image" 2>/dev/null || stat -f%z "$image" 2>/dev/null || echo 0)"
 
+    local target_size
+    target_size="$(blockdev --getsize64 "$target" 2>/dev/null || echo 0)"
+
     echo ""
-    echo "${C_BOLD}=== Confirmation Required ===${C_RESET}"
+    echo "${C_BOLD}${C_BLUE}╔═══════════════════════════════════════════════════════════╗${C_RESET}"
+    echo "${C_BOLD}${C_BLUE}║           ⚠️  CONFIRMATION REQUIRED ⚠️                  ║${C_RESET}"
+    echo "${C_BOLD}${C_BLUE}╚═══════════════════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    echo "Target device:  ${C_YELLOW}$target${C_RESET}"
-    echo "Image file:     $image"
-    echo "Image size:    $(human_size "$image_size")"
+    echo "  ${C_BOLD}Target device:${C_RESET}   ${C_YELLOW}$target${C_RESET}"
+    echo "  ${C_BOLD}Device size:${C_RESET}    $(human_size "$target_size")"
+    echo "  ${C_BOLD}Image file:${C_RESET}     $image"
+    echo "  ${C_BOLD}Image size:${C_RESET}     $(human_size "$image_size")"
     echo ""
-    echo "${C_RED}⚠️  WARNING: All data on $target will be PERMANENTLY ERASED!${C_RESET}"
+    echo "${C_RED}${C_BOLD}⚠️  WARNING: All data on $target will be PERMANENTLY ERASED!${C_RESET}"
+    echo "${C_RED}   This action cannot be undone!${C_RESET}"
     echo ""
 
     local confirm
-    read -r -p "Do you want to continue? (y/N): " confirm
+    printf "${C_BOLD}Do you want to continue?${C_RESET} [y/N]: "
+    read -r confirm
 
     case "$confirm" in
         [yY][eE][sS]|[yY])
@@ -361,6 +588,16 @@ parse_args() {
             --verify)
                 export ISTOREOS_VERIFY=1
                 ;;
+            --hash-url)
+                shift
+                [ $# -eq 0 ] && { log_error "Missing hash URL argument"; exit 1; }
+                export ISTOREOS_HASH_URL="$1"
+                ;;
+            --expected-hash)
+                shift
+                [ $# -eq 0 ] && { log_error "Missing hash argument"; exit 1; }
+                export ISTOREOS_EXPECTED_HASH="$1"
+                ;;
             --no-prompt)
                 export ISTOREOS_NO_PROMPT=1
                 ;;
@@ -375,6 +612,33 @@ parse_args() {
         esac
         shift
     done
+}
+
+check_dependencies() {
+    log_info "Checking dependencies..."
+
+    local missing=""
+
+    if ! check_command dd; then
+        missing="$missing dd"
+    fi
+
+    if ! check_command blockdev; then
+        missing="$missing blockdev"
+    fi
+
+    if ! get_downloader >/dev/null; then
+        missing="$missing curl/wget"
+    fi
+
+    if [ -n "$missing" ]; then
+        log_error "Missing required commands:$missing"
+        log_info "Please install missing dependencies"
+        return 1
+    fi
+
+    log_success "All dependencies satisfied"
+    return 0
 }
 
 main() {
@@ -395,9 +659,13 @@ main() {
         exit 1
     fi
 
+    check_dependencies || exit 1
+
     check_lockfile
     trap cleanup EXIT
-    touch "$LOCKFILE"
+    write_pid
+
+    log_step "1/4: Checking configuration..."
 
     local img_url="${ISTOREOS_IMG_URL:-$DEFAULT_IMG_URL}"
     if [ -z "$img_url" ]; then
@@ -406,22 +674,45 @@ main() {
         exit 1
     fi
 
+    log_info "Image URL: $img_url"
+
     local target_dev="${ISTOREOS_SD_DEV:-}"
     if [ -z "$target_dev" ]; then
+        log_step "2/4: Detecting target device..."
+        echo ""
+        echo "Available devices:"
+        list_available_devices || true
+        echo ""
         target_dev="$(detect_target_device)" || exit 1
     else
         if ! is_safe_device "$target_dev"; then
-            log_error "Selected device $target_dev appears to be unsafe"
+            log_error "Selected device $target_dev appears to be unsafe (primary disk?)"
             exit 1
         fi
         log_info "Using specified target device: $target_dev"
     fi
+
+    log_step "3/4: Downloading image..."
 
     local img_name
     img_name="$(basename "$img_url")"
     local img_path="${DOWNLOAD_DIR}/${img_name}"
 
     download_image "$img_url" "$img_path" || exit 1
+
+    if [ "$VERIFY" = "1" ] || [ -n "$HASH_URL" ] || [ -n "$EXPECTED_HASH" ]; then
+        log_step "3.5/4: Verifying image hash..."
+
+        if [ -n "$EXPECTED_HASH" ]; then
+            verify_hash "$img_path" "$EXPECTED_HASH" || exit 1
+        elif [ -n "$HASH_URL" ]; then
+            fetch_and_verify_hash "$img_path" "$HASH_URL" || exit 1
+        elif [ "$VERIFY" = "1" ]; then
+            log_warn "Verification enabled but no hash provided. Skipping..."
+        fi
+    fi
+
+    log_step "4/4: Writing image..."
 
     if [ "${ISTOREOS_NO_PROMPT:-0}" != "1" ]; then
         confirm_write "$target_dev" "$img_path" || exit 0
@@ -432,9 +723,11 @@ main() {
     write_image "$img_path" "$target_dev" || exit 1
 
     log "=========================================="
-    log_success "Installation completed!"
+    log_success "Installation completed successfully!"
     log "=========================================="
     log "Log file: $LOG"
+    log ""
+    log "You can now boot from the SD card!"
 
     return 0
 }
