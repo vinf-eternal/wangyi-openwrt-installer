@@ -40,14 +40,13 @@ build: clean
 	@cp $(SCRIPT_DIR)/$(PKG_NAME) $(IPK_DIR)/data/usr/bin/
 	@chmod 755 $(IPK_DIR)/data/usr/bin/$(PKG_NAME)
 	@cp -r examples/* $(IPK_DIR)/data/usr/share/$(PKG_NAME)/ 2>/dev/null || true
-	@cd $(IPK_DIR)/CONTROL && tar -czf $(BUILD_DIR)/control.tar.gz .
-	@cd $(IPK_DIR)/data && tar -czf $(BUILD_DIR)/data.tar.gz .
-	@cd $(BUILD_DIR) && \
-		echo "2.0" > debian-binary && \
-		ar rcs $(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH).ipk \
-			debian-binary \
-			control.tar.gz \
-			data.tar.gz
+	@tar -czf $(BUILD_DIR)/control.tar.gz -C $(IPK_DIR)/CONTROL .
+	@tar -czf $(BUILD_DIR)/data.tar.gz -C $(IPK_DIR)/data .
+	@echo "2.0" > $(BUILD_DIR)/debian-binary
+	@cd $(BUILD_DIR) && ar rcs $(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH).ipk \
+		debian-binary \
+		control.tar.gz \
+		data.tar.gz
 	@echo "Built: $(BUILD_DIR)/$(PKG_NAME)_$(PKG_VERSION)-$(PKG_RELEASE)_$(PKG_ARCH).ipk"
 
 clean:
