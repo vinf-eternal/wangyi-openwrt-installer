@@ -1,0 +1,23 @@
+#!/bin/sh
+# prerm script for wangyi-openwrt-installer
+
+set -e
+
+echo "=========================================="
+echo "Removing wangyi-openwrt-installer..."
+echo "=========================================="
+
+# Remove symbolic links
+rm -f /usr/bin/istoreos-installer 2>/dev/null || true
+
+# Clean up log files (optional - commented out to preserve logs)
+# rm -f /tmp/istoreos-install.log
+# rm -rf /tmp/istoreos
+
+# Remove lock file
+rm -f /var/lock/istoreos-installer.lock
+
+echo "wangyi-openwrt-installer removed"
+echo "=========================================="
+
+exit 0

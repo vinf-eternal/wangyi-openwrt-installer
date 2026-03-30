@@ -3,8 +3,15 @@ name: CI
 on:
   push:
     branches: [main, master, develop]
+    tags:
+      - 'v*'
   pull_request:
     branches: [main, master]
+
+env:
+  PKG_NAME: wangyi-openwrt-installer
+  PKG_VERSION: 1.0.1
+  PKG_RELEASE: 1
 
 jobs:
   lint:
@@ -27,8 +34,9 @@ jobs:
         continue-on-error: true
 
   build:
-    name: Build IPK
+    name: Build IPK (x86_64)
     runs-on: ubuntu-latest
+    needs: lint
     
     steps:
       - name: Checkout code
@@ -41,22 +49,20 @@ jobs:
       
       - name: Build IPK
         run: make build
-        continue-on-error: true
+        env:
+          PKG_ARCH: x86_64
 
       - name: Upload IPK artifact
         uses: actions/upload-artifact@v4
-        if: success() || failure()
         with:
-          name: ${{ env.PKG_NAME }}-${{ env.PKG_VERSION }}-x86_64.ipk
+          name: ${{ env.PKG_NAME }}_${{ env.PKG_VERSION }}-x86_64
           path: build/*.ipk
           retention-days: 7
-        env:
-          PKG_NAME: wangyi-openwrt-installer
-          PKG_VERSION: 1.0.1
 
   test:
     name: Tests
     runs-on: ubuntu-latest
+    needs: lint
     
     steps:
       - name: Checkout code
@@ -69,7 +75,7 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, test]
     if: startsWith(github.ref, 'refs/tags/v')
     
     steps:
@@ -81,11 +87,15 @@ jobs:
         with:
           path: artifacts
       
+      - name: List artifacts
+        run: ls -la artifacts/
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/*.ipk
+          files: artifacts/**/*.ipk
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

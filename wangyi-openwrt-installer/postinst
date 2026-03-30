@@ -1,0 +1,29 @@
+#!/bin/sh
+# postinst script for wangyi-openwrt-installer
+
+set -e
+
+echo "=========================================="
+echo "wangyi-openwrt-installer installed successfully"
+echo "=========================================="
+
+# Ensure log directory exists
+mkdir -p /tmp/istoreos
+
+# Create symbolic link for easier access
+if [ ! -L /usr/bin/wangyi-openwrt-installer ]; then
+    ln -sf /usr/bin/wangyi-openwrt-installer /usr/bin/istoreos-installer 2>/dev/null || true
+fi
+
+echo ""
+echo "Usage:"
+echo "  wangyi-openwrt-installer --help"
+echo ""
+echo "Examples:"
+echo "  wangyi-openwrt-installer --url https://example.com/istoreos.img"
+echo "  wangyi-openwrt-installer --dry-run --url https://example.com/istoreos.img"
+echo ""
+echo "For more info, see: /usr/share/wangyi-openwrt-installer/"
+echo "=========================================="
+
+exit 0
