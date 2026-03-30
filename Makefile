@@ -13,7 +13,7 @@
 
 # Configuration
 PKG_NAME := wangyi-openwrt-installer
-PKG_VERSION := 1.0.0
+PKG_VERSION := 1.0.1
 PKG_RELEASE := 1
 PKG_ARCH := x86_64
 PKG_MAINTAINER := vinf-eternal <vinf-eternal@proton.me>
